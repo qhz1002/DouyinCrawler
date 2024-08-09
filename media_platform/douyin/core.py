@@ -1,7 +1,9 @@
 import asyncio
 import os
 import random
+import json
 from asyncio import Task
+import pandas as pd
 from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.async_api import (BrowserContext, BrowserType, Page,
@@ -171,25 +173,40 @@ class DouYinCrawler(AbstractCrawler):
                     f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
-
+    
+    # 主页信息
     async def get_creators_and_videos(self) -> None:
-        """
-        Get the information and videos of the specified creator
-        """
+        # 配置文件路径
+        progress_file = 'progress.json'
+        csv_file = 'temp.csv'
+
+        # 如果进度文件存在，读取上次的位置
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r') as f:
+                progress = json.load(f)
+            last_read_position = progress.get('last_position', 0)
+        else:
+            last_read_position = 0
+
+        # 读取CSV文件，从上次的位置开始
+        df = pd.read_csv(csv_file, skiprows=range(1, last_read_position + 1), nrows=400)
+
+        # 将DataFrame转换为列表
+        sec_ids = df.values.flatten().tolist()
+
+
+        # 获取抖音用户信息
         utils.logger.info("[DouYinCrawler.get_creators_and_videos] Begin get douyin creators")
-        for user_id in config.DY_CREATOR_ID_LIST:
+        for user_id in sec_ids:
             creator_info: Dict = await self.dy_client.get_user_info(user_id)
             if creator_info:
                 await douyin_store.save_creator(user_id, creator=creator_info)
-
-            # Get all video information of the creator
-            all_video_list = await self.dy_client.get_all_user_aweme_posts(
-                sec_user_id=user_id,
-                callback=self.fetch_creator_video_detail
-            )
-
-            video_ids = [video_item.get("aweme_id") for video_item in all_video_list]
-            await self.batch_get_note_comments(video_ids)
+                await asyncio.sleep(0.5)
+                print(f'正在爬取：{last_read_position}')
+                last_read_position += 1
+                # 保存新的读取位置
+                with open(progress_file, 'w') as f:
+                    json.dump({'last_position': last_read_position}, f)
 
     async def fetch_creator_video_detail(self, video_list: List[Dict]):
         """
